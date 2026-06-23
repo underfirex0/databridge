@@ -1,0 +1,262 @@
+// This is your Prisma schema file
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── ENUMS ────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  TELECONTACT
+  ATLANTASANAD
+}
+
+enum CompanyStatus {
+  ACTIVE
+  INACTIVE
+  DISSOLVED
+  SUSPENDED
+}
+
+enum DataQuality {
+  EXCELLENT   // 90-100%
+  GOOD        // 70-89%
+  FAIR        // 50-69%
+  POOR        // 0-49%
+}
+
+enum MergeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  AUTO_MERGED
+}
+
+enum AlertType {
+  DIRECTOR_CHANGE
+  ADDRESS_CHANGE
+  LEGAL_STATUS_CHANGE
+  ACTIVITY_CHANGE
+  DUPLICATE_DETECTED
+  DATA_INCONSISTENCY
+}
+
+// ─── USERS ────────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  role      UserRole
+  avatarUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  auditLogs AuditLog[]
+
+  @@map("users")
+}
+
+// ─── COMPANY (Fiche Client Entreprise) ────────────────────────────────────────
+
+model Company {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // ── 1. Signalétique Entreprise (Telecontact) ─────────────────────────────
+  typeClient        String?
+  raisonSociale     String
+  nomCommercial     String?
+  ice               String?  @unique
+  rc                String?
+  if_               String?  @map("if")
+  cnss              String?
+  dateCreation      DateTime?
+  secteurActivite   String?
+  activitePrincipale String?
+  detailActivite    String?
+  formeJuridique    String?
+  tailleEntreprise  String?
+  chiffreAffaires   Float?
+  groupe            String?
+  filiale           String?
+  status            CompanyStatus @default(ACTIVE)
+
+  // ── 2. Coordonnées & Localisation (Telecontact) ──────────────────────────
+  adressePrincipale   String?
+  coordonneesSecondaires String?
+  ville               String?
+  region              String?
+  zoneService         String?
+  arrondissement      String?
+  commune             String?
+  longitude           Float?
+  latitude            Float?
+  telephonePrincipal  String?
+  telephoneSecondaire String?
+  emailPrincipal      String?
+  siteWeb             String?
+
+  // ── 3. Contacts & Dirigeants (Telecontact) ───────────────────────────────
+  contacts Contact[]
+
+  // ── 4. Vision Portefeuille (AtlantaSanad) ────────────────────────────────
+  contratsActifs      Int?
+  garanties           String?
+  produitsDetenusJson Json?
+  primesTotal         Float?
+  dateProchainRenouvellement DateTime?
+  multiEquipement     Boolean @default(false)
+
+  // ── 5. Vision Sinistres (AtlantaSanad) ───────────────────────────────────
+  sinistresEnCours    Int?
+  historiqueSinistresJson Json?
+  statutDossiers      String?
+  coutSinistresTotal  Float?
+  ratioSinistralite   Float?
+
+  // ── 6. Vision Financière (AtlantaSanad) ──────────────────────────────────
+  quittancesJson      Json?
+  encaissementsTotal  Float?
+  impayesTotal        Float?
+  situationComptable  String?
+  historiqueReglementsJson Json?
+
+  // ── 7. Interactions & Relation Client (AtlantaSanad) ─────────────────────
+  activitesJson       Json?
+  reclamationsJson    Json?
+  historiqueEchangesJson Json?
+  demandesClientsJson Json?
+  rendezVousJson      Json?
+  campagnesRecuesJson Json?
+  actionsCommercialesJson Json?
+
+  // ── Relations & Écosystème (Telecontact) ─────────────────────────────────
+  parentId    String?
+  parent      Company?  @relation("CompanyHierarchy", fields: [parentId], references: [id])
+  subsidiaries Company[] @relation("CompanyHierarchy")
+  relatedCompaniesJson Json?
+
+  // ── Gouvernance & Qualité DATA ────────────────────────────────────────────
+  sourceData          String?
+  statutVerification  String?
+  derniereMiseAJour   DateTime?
+  derniereModification DateTime?
+  qualityScore        Int?      // 0-100
+  dataQuality         DataQuality?
+  doublonPotentielId  String?
+
+  // ── Metadata ──────────────────────────────────────────────────────────────
+  importBatchId String?
+  importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id])
+
+  alerts    Alert[]
+  merges    MergeSuggestion[] @relation("SourceCompany")
+  mergedTo  MergeSuggestion[] @relation("TargetCompany")
+  auditLogs AuditLog[]
+
+  @@map("companies")
+}
+
+// ─── CONTACTS (Dirigeants, Représentants, etc.) ───────────────────────────────
+
+model Contact {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  type            String  // dirigeant | representant | interlocuteur | financier | rh
+  nom             String
+  prenom          String?
+  fonction        String?
+  poste           String?
+  telephone       String?
+  email           String?
+  isPrincipal     Boolean @default(false)
+  dateNomination  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("contacts")
+}
+
+// ─── IMPORT BATCH ─────────────────────────────────────────────────────────────
+
+model ImportBatch {
+  id          String   @id @default(cuid())
+  filename    String
+  totalRows   Int
+  importedRows Int     @default(0)
+  errorRows   Int      @default(0)
+  status      String   @default("processing") // processing | completed | failed
+  errorsJson  Json?
+  createdAt   DateTime @default(now())
+  completedAt DateTime?
+
+  companies Company[]
+
+  @@map("import_batches")
+}
+
+// ─── MERGE SUGGESTIONS (IA & Smart Matching) ──────────────────────────────────
+
+model MergeSuggestion {
+  id              String      @id @default(cuid())
+  sourceCompanyId String
+  targetCompanyId String
+  sourceCompany   Company     @relation("SourceCompany", fields: [sourceCompanyId], references: [id])
+  targetCompany   Company     @relation("TargetCompany", fields: [targetCompanyId], references: [id])
+
+  confidenceScore Float       // 0-1
+  matchedFields   Json        // which fields matched
+  status          MergeStatus @default(PENDING)
+  resolvedAt      DateTime?
+  resolvedBy      String?
+
+  createdAt DateTime @default(now())
+
+  @@map("merge_suggestions")
+}
+
+// ─── ALERTS (Veille Entreprise) ───────────────────────────────────────────────
+
+model Alert {
+  id        String    @id @default(cuid())
+  companyId String
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  type      AlertType
+  message   String
+  oldValue  String?
+  newValue  String?
+  isRead    Boolean   @default(false)
+  createdAt DateTime  @default(now())
+
+  @@map("alerts")
+}
+
+// ─── AUDIT LOG ────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id])
+
+  action    String   // created | updated | merged | imported | exported
+  field     String?
+  oldValue  String?
+  newValue  String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@map("audit_logs")
+}
